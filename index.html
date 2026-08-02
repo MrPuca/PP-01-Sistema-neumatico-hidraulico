@@ -332,7 +332,7 @@ const COL = {
   proceso:0x9aa4ad, agua:0x38bdf8, petroleo:0xb5651d,
   aire:0xe5484d, senal:0x58a6ff, aceite:0xe2a03f,
   acero:0xb8c1cb, verde:0x8fae7a, azul:0x2f6fb0, gris:0x6e7681,
-  piso:0x1b222b, amarillo:0xd6b03a
+  piso:0x0d1219, amarillo:0xd6b03a
 };
 /* Resplandor de cada fluido: tono más claro que el núcleo. Se dibuja con mezcla
    aditiva, así que sobre el piso oscuro suma luz en vez de taparlo.            */
@@ -356,6 +356,14 @@ function init(){
   renderer = new THREE.WebGLRenderer({antialias:true});
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));
   renderer.setSize(innerWidth, innerHeight);
+  /* Gestión de color: hasta acá la escena se escribía en espacio lineal, sin
+     corrección gamma, y por eso los colores salían apagados por más que se
+     subieran las luces. Con sRGB + ACES la respuesta es correcta, pero obliga
+     a recalibrar exposición, luces y paleta (abajo).                          */
+  renderer.outputEncoding      = THREE.sRGBEncoding;
+  renderer.toneMapping         = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.46;
+
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
   // La planta es estática salvo la rampa: el mapa de sombras no se recalcula
@@ -364,11 +372,12 @@ function init(){
   renderer.shadowMap.needsUpdate = true;
   app.appendChild(renderer.domElement);
 
-  // La hemisférica baja porque ahora parte de la luz ambiente la aporta el entorno.
-  scene.add(new THREE.HemisphereLight(0xbfd4ea, 0x14181d, 0.42));
-  const sol = new THREE.DirectionalLight(0xfff1dd, 0.95);
+  // Recalibradas para gamma correcta: menos ambiente y un sol más marcado, que
+  // es lo que da relieve. Con los valores viejos la escena se iba a blanco.
+  scene.add(new THREE.HemisphereLight(0xbfd4ea, 0x14181d, 0.18));
+  const sol = new THREE.DirectionalLight(0xfff1dd, 1.30);
   sol.position.set(40, 60, 30); scene.add(sol);
-  const relleno = new THREE.DirectionalLight(0x7fa8d8, 0.22);
+  const relleno = new THREE.DirectionalLight(0x7fa8d8, 0.16);
   relleno.position.set(-40, 25, -30); scene.add(relleno);
 
   // El acero necesita algo que reflejar: sin esto, metalness sólo ensucia.
@@ -390,7 +399,7 @@ function init(){
     new THREE.MeshStandardMaterial({color:COL.piso, roughness:1, metalness:0}));
   piso.rotation.x = -Math.PI/2; piso.position.y = -0.05;
   piso.receiveShadow = true; scene.add(piso);
-  const grid = new THREE.GridHelper(220, 44, 0x3d4854, 0x272f39);
+  const grid = new THREE.GridHelper(220, 44, 0x212b37, 0x151c24);
   grid.position.y = 0; scene.add(grid);
 
   clock = new THREE.Clock();
@@ -406,7 +415,7 @@ function init(){
     o.castShadow = true; o.receiveShadow = true;
     o.material.envMapIntensity = o.material.metalness > 0.45 ? 1.1 : 0.28;
   });
-  piso.material.envMapIntensity = 0.18;
+  piso.material.envMapIntensity = 0.10;
 
   addEventListener('resize', onResize);
 }
@@ -418,8 +427,8 @@ function entornoProcedural(){
   const cv = document.createElement('canvas'); cv.width = 512; cv.height = 256;
   const ctx = cv.getContext('2d');
   const g = ctx.createLinearGradient(0, 0, 0, 256);
-  g.addColorStop(0,    '#3a4a5e');
-  g.addColorStop(0.46, '#1a222c');
+  g.addColorStop(0,    '#26313f');
+  g.addColorStop(0.46, '#111821');
   g.addColorStop(0.54, '#0b0f14');
   g.addColorStop(1,    '#04060a');
   ctx.fillStyle = g; ctx.fillRect(0, 0, 512, 256);
@@ -430,7 +439,8 @@ function entornoProcedural(){
     ctx.fillStyle = rg; ctx.fillRect(x - r, y - r, r * 2, r * 2);
   });
   const tex = new THREE.CanvasTexture(cv);
-  tex.mapping = THREE.EquirectangularReflectionMapping;
+  tex.mapping  = THREE.EquirectangularReflectionMapping;
+  tex.encoding = THREE.sRGBEncoding;   // el canvas ya viene en sRGB
   const pmrem = new THREE.PMREMGenerator(renderer);
   const env = pmrem.fromEquirectangular(tex).texture;
   pmrem.dispose(); tex.dispose();
@@ -491,8 +501,10 @@ function etiqueta(txt,x,y,z,sub){
            ctx.fillText(sub, cv.width/2, 108); }
   // Con depthTest activo la etiqueta queda detrás de lo que la tapa: sin esto,
   // los carteles de equipos lejanos se dibujaban sobre los tanques de adelante.
+  const texEt = new THREE.CanvasTexture(cv);
+  texEt.encoding = THREE.sRGBEncoding;
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({
-    map:new THREE.CanvasTexture(cv), depthTest:true, transparent:true}));
+    map:texEt, depthTest:true, transparent:true, toneMapped:false}));
   sp.position.set(x,y,z);
   sp.scale.set(9, sub?2.64:1.69, 1);
   sp.renderOrder=999; scene.add(sp); etiquetas.push(sp); return sp;
@@ -510,7 +522,9 @@ const texHalo = (()=>{
   g.addColorStop(0.55,'rgba(255,255,255,0.16)');
   g.addColorStop(1,   'rgba(255,255,255,0)');
   ctx.fillStyle=g; ctx.fillRect(0,0,64,64);
-  return new THREE.CanvasTexture(cv);
+  const t = new THREE.CanvasTexture(cv);
+  t.encoding = THREE.sRGBEncoding;
+  return t;
 })();
 
 /* Cada partícula es un núcleo opaco de color pleno más un halo aditivo que la
@@ -521,10 +535,13 @@ function flujo(pts, color, n, vel, tam, op){
   const curva = new THREE.CatmullRomCurve3(pts.map(p=>new THREE.Vector3(...p)));
   const r   = tam||0.34;
   const geo = new THREE.SphereGeometry(r, 10, 8);
-  const m   = new THREE.MeshBasicMaterial({color});
+  /* toneMapped:false — el fluido es señalización didáctica, no una superficie
+     física. Si pasa por ACES se le comprimen las altas luces y pierde el punch
+     que lo hace visible sobre el piso oscuro.                                 */
+  const m   = new THREE.MeshBasicMaterial({color, toneMapped:false});
   const brillo = o.brillo!==undefined ? o.brillo : 0.8;
   const matHalo = new THREE.SpriteMaterial({
-    map:texHalo, color:o.halo||color, transparent:true,
+    map:texHalo, color:o.halo||color, transparent:true, toneMapped:false,
     blending:THREE.AdditiveBlending, depthWrite:false, opacity:brillo});
   const bolas=[];
   for(let i=0;i<n;i++){
@@ -684,7 +701,7 @@ function construirPlanta(){
   /* ================= PLC / ESD ================= */
   const plc = caja(4,5.5,2.2,0x21262d,-2,2.75,44);
   const led = esfera(0.45,0x3fb950,-2,4.6,45.2,
-        new THREE.MeshBasicMaterial({color:0x3fb950}));
+        new THREE.MeshBasicMaterial({color:0x3fb950, toneMapped:false}));
   equipos.plc=plc; equipos.led=led;
   etiqueta('PLC / ESD',-2,9,44,'SSD-001');
 
