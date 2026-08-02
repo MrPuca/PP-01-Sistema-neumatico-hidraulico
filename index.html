@@ -4,6 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PP-01 · Planta de Inyección de Agua — Animación 3D (offline)</title>
+<meta name="description" content="Animación 3D interactiva del sistema neumático de instrumentos y la contingencia hidráulica antiderrame de la planta de inyección de agua PP-01. Proyecto final de Sistemas Hidráulicos y Neumáticos, TSMI Plan 685.">
+<meta name="theme-color" content="#0d1117">
+<meta name="author" content="Carro · Puca · Torres · Seguel">
+
+<!-- Vista previa al compartir el enlace (WhatsApp, mail, Teams) -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="PP-01 · Planta de Inyección de Agua — Animación 3D">
+<meta property="og:description" content="Recorrido del proceso, cadena del aire de instrumentos, falla del compresor con ESD2 y contingencia hidráulica HPU-100. TSMI Plan 685.">
+<meta property="og:image" content="https://mrpuca.github.io/PP-01-Sistema-neumatico-hidraulico/preview.png">
+<meta property="og:url" content="https://mrpuca.github.io/PP-01-Sistema-neumatico-hidraulico/">
+<meta name="twitter:card" content="summary_large_image">
+
+<!-- Favicon SVG embebido: válvula sobre fondo oscuro, sin archivo externo -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230d1117'/%3E%3Cpath d='M6 19h20' stroke='%239aa4ad' stroke-width='2.5' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='19' r='4.6' fill='%2338bdf8'/%3E%3Crect x='14.6' y='7' width='2.8' height='7' fill='%238b949e'/%3E%3Crect x='11' y='4' width='10' height='4' rx='1.2' fill='%23f0883e'/%3E%3C/svg%3E">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden;background:#0d1117;
@@ -342,25 +356,85 @@ function init(){
   renderer = new THREE.WebGLRenderer({antialias:true});
   renderer.setPixelRatio(Math.min(devicePixelRatio,2));
   renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+  // La planta es estática salvo la rampa: el mapa de sombras no se recalcula
+  // en cada cuadro, sólo cuando algo se mueve de verdad (ver el loop).
+  renderer.shadowMap.autoUpdate  = false;
+  renderer.shadowMap.needsUpdate = true;
   app.appendChild(renderer.domElement);
 
-  scene.add(new THREE.HemisphereLight(0xbfd4ea, 0x14181d, 0.85));
-  const sol = new THREE.DirectionalLight(0xffffff, 0.75);
+  // La hemisférica baja porque ahora parte de la luz ambiente la aporta el entorno.
+  scene.add(new THREE.HemisphereLight(0xbfd4ea, 0x14181d, 0.42));
+  const sol = new THREE.DirectionalLight(0xfff1dd, 0.95);
   sol.position.set(40, 60, 30); scene.add(sol);
-  const relleno = new THREE.DirectionalLight(0x7fa8d8, 0.3);
+  const relleno = new THREE.DirectionalLight(0x7fa8d8, 0.22);
   relleno.position.set(-40, 25, -30); scene.add(relleno);
+
+  // El acero necesita algo que reflejar: sin esto, metalness sólo ensucia.
+  scene.environment = entornoProcedural();
+
+  sol.castShadow = true;
+  // en teléfonos, media resolución de sombra: la diferencia no se ve y alivia la GPU
+  const resSombra = Math.min(innerWidth, innerHeight) < 700 ? 1024 : 2048;
+  sol.shadow.mapSize.set(resSombra, resSombra);
+  const d = 75;
+  sol.shadow.camera.left = -d; sol.shadow.camera.right  =  d;
+  sol.shadow.camera.top  =  d; sol.shadow.camera.bottom = -d;
+  sol.shadow.camera.near = 1;  sol.shadow.camera.far    = 220;
+  sol.shadow.bias = -0.0015;
 
   // piso + grilla
   const piso = new THREE.Mesh(
     new THREE.PlaneGeometry(220,180),
     new THREE.MeshStandardMaterial({color:COL.piso, roughness:1, metalness:0}));
-  piso.rotation.x = -Math.PI/2; piso.position.y = -0.05; scene.add(piso);
+  piso.rotation.x = -Math.PI/2; piso.position.y = -0.05;
+  piso.receiveShadow = true; scene.add(piso);
   const grid = new THREE.GridHelper(220, 44, 0x3d4854, 0x272f39);
   grid.position.y = 0; scene.add(grid);
 
   clock = new THREE.Clock();
   construirPlanta();
+
+  /* Sólo los equipos proyectan sombra: las partículas de fluido y el LED usan
+     MeshBasicMaterial y quedan afuera, porque representan algo luminoso y
+     además son ~100 objetos que encarecían el paso de sombras al pedo.
+     El reflejo del entorno pega fuerte en el acero y apenas en lo mate.        */
+  scene.traverse(o => {
+    if(!o.isMesh || !o.material || o.material.transparent) return;
+    if(!o.material.isMeshStandardMaterial) return;
+    o.castShadow = true; o.receiveShadow = true;
+    o.material.envMapIntensity = o.material.metalness > 0.45 ? 1.1 : 0.28;
+  });
+  piso.material.envMapIntensity = 0.18;
+
   addEventListener('resize', onResize);
+}
+
+/* Cielo, horizonte y piso en degradé más dos luminarias, todo dibujado por
+   canvas: no descarga ningún HDRI. PMREM lo convierte en el mapa de reflexión
+   que consumen los MeshStandardMaterial.                                      */
+function entornoProcedural(){
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 256;
+  const ctx = cv.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0,    '#3a4a5e');
+  g.addColorStop(0.46, '#1a222c');
+  g.addColorStop(0.54, '#0b0f14');
+  g.addColorStop(1,    '#04060a');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 512, 256);
+  [[130, 58, 78], [380, 44, 60]].forEach(([x, y, r]) => {
+    const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
+    rg.addColorStop(0, 'rgba(255,244,224,0.9)');
+    rg.addColorStop(1, 'rgba(255,244,224,0)');
+    ctx.fillStyle = rg; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  });
+  const tex = new THREE.CanvasTexture(cv);
+  tex.mapping = THREE.EquirectangularReflectionMapping;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const env = pmrem.fromEquirectangular(tex).texture;
+  pmrem.dispose(); tex.dispose();
+  return env;
 }
 function onResize(){
   camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
@@ -415,8 +489,10 @@ function etiqueta(txt,x,y,z,sub){
   ctx.fillText(txt, cv.width/2, sub?58:62);
   if(sub){ ctx.fillStyle='#9fb0c0'; ctx.font='30px Segoe UI, Arial';
            ctx.fillText(sub, cv.width/2, 108); }
+  // Con depthTest activo la etiqueta queda detrás de lo que la tapa: sin esto,
+  // los carteles de equipos lejanos se dibujaban sobre los tanques de adelante.
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({
-    map:new THREE.CanvasTexture(cv), depthTest:false, transparent:true}));
+    map:new THREE.CanvasTexture(cv), depthTest:true, transparent:true}));
   sp.position.set(x,y,z);
   sp.scale.set(9, sub?2.64:1.69, 1);
   sp.renderOrder=999; scene.add(sp); etiquetas.push(sp); return sp;
@@ -1201,9 +1277,28 @@ function actualizarHUD(){
   gC.className   = est.carga>0.6?'ok':est.carga>0.05?'warn':'bad';
 }
 
+/* Red de seguridad: si el equipo no sostiene 24 fps en los primeros segundos
+   (máquina vieja, teléfono de gama baja, GPU por software), se apagan las
+   sombras. Que la animación corra fluida importa más que el detalle.          */
+let fpsCuadros = 0, fpsDesde = 0, calidadAjustada = false;
+function vigilarRendimiento(){
+  if(calidadAjustada) return;
+  if(!fpsDesde){ fpsDesde = performance.now(); return; }
+  fpsCuadros++;
+  const transcurrido = performance.now() - fpsDesde;
+  if(transcurrido < 3000) return;
+  calidadAjustada = true;
+  if(fpsCuadros/(transcurrido/1000) < 24){
+    renderer.shadowMap.enabled = false;
+    scene.traverse(o => { if(o.isMesh) o.castShadow = false; });
+    renderer.shadowMap.needsUpdate = true;
+  }
+}
+
 function animar(){
   requestAnimationFrame(animar);
   const dt = Math.min(clock.getDelta(), 0.05);
+  vigilarRendimiento();
 
   // avance del guion
   if(corriendo){
@@ -1283,6 +1378,10 @@ function animar(){
     equipos.compuerta.rotation.z += (abrir - equipos.compuerta.rotation.z)*dt*3.5;
   }
   const descargando = est.descargando && est.angulo>0.34 && est.carga>0;
+
+  // se rehace el mapa de sombras sólo mientras la rampa gira o cae absorbente
+  if(Math.abs(objetivo - est.rampa) > 0.0005 || descargando)
+    renderer.shadowMap.needsUpdate = true;
 
   if(descargando){
     est.carga = Math.max(0, est.carga - dt*0.20);          // se vacía en ~5 s
