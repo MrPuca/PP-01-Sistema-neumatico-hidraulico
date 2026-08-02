@@ -1294,28 +1294,50 @@ function actualizarHUD(){
   gC.className   = est.carga>0.6?'ok':est.carga>0.05?'warn':'bad';
 }
 
-/* Red de seguridad: si el equipo no sostiene 24 fps en los primeros segundos
-   (máquina vieja, teléfono de gama baja, GPU por software), se apagan las
-   sombras. Que la animación corra fluida importa más que el detalle.          */
-let fpsCuadros = 0, fpsDesde = 0, fpsArranque = 0, calidadAjustada = false;
+/* Red de seguridad para equipos lentos. Degrada por niveles, midiendo de nuevo
+   después de cada uno. El orden salió de medir cuánto rinde cada palanca sobre
+   GPU por software (el peor caso posible): apagar sombras solo daba 5→7 fps,
+   mientras que bajar la resolución de render llevaba a 18 y sacar el mapa de
+   reflexión a 27. Por eso las sombras no van solas.                           */
+let fpsCuadros = 0, fpsDesde = 0, fpsArranque = 0, nivelCalidad = 0;
+
+function bajarCalidad1(){          // resolución de render + sombras
+  renderer.setPixelRatio(1);
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = false;
+  scene.traverse(o => { if(o.isMesh) o.castShadow = false; });
+  renderer.shadowMap.needsUpdate = true;
+}
+function bajarCalidad2(){          // reflejo del entorno: lo más caro por píxel
+  scene.environment = null;
+  scene.traverse(o => {
+    if(o.isMesh && o.material && o.material.isMeshStandardMaterial){
+      o.material.envMap = null; o.material.needsUpdate = true;
+    }
+  });
+}
+
 function vigilarRendimiento(){
-  if(calidadAjustada) return;
+  if(nivelCalidad >= 9) return;                 // ya se decidió, no se mide más
   const ahora = performance.now();
   if(!fpsArranque){ fpsArranque = ahora; return; }
   /* El primer segundo no se cuenta: ahí el navegador compila los shaders y
-     arma las texturas, y siempre rinde peor. Medir en esa ventana hacía que
-     un equipo mediano pareciera lento y perdiera las sombras al pedo.        */
+     siempre rinde peor. Medir en esa ventana daba falsos positivos.          */
   if(ahora - fpsArranque < 1000) return;
   if(!fpsDesde){ fpsDesde = ahora; return; }
   fpsCuadros++;
   const transcurrido = ahora - fpsDesde;
-  if(transcurrido < 3000) return;
-  calidadAjustada = true;
-  if(fpsCuadros/(transcurrido/1000) < 24){
-    renderer.shadowMap.enabled = false;
-    scene.traverse(o => { if(o.isMesh) o.castShadow = false; });
-    renderer.shadowMap.needsUpdate = true;
+  if(transcurrido < 2000) return;               // dos segundos por tramo
+  const fps = fpsCuadros/(transcurrido/1000);
+  fpsCuadros = 0; fpsDesde = ahora;             // reinicia para el tramo siguiente
+
+  if(fps >= 24){ nivelCalidad = 9; return; }    // rinde bien: se deja como está
+  if(fps < 12 && nivelCalidad === 0){           // muy lento: degrada todo junto
+    bajarCalidad1(); bajarCalidad2(); nivelCalidad = 9; return;
   }
+  nivelCalidad++;
+  if(nivelCalidad === 1) bajarCalidad1();
+  else { bajarCalidad2(); nivelCalidad = 9; }
 }
 
 function animar(){
