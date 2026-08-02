@@ -259,7 +259,8 @@
 <div id="esd">PARO DE EMERGENCIA — ESD2<small>Falla segura: todas las válvulas cierran por resorte</small></div>
 
 <div id="legend">
-  <div>Proceso (agua / petróleo) <i style="background:#8b949e"></i></div>
+  <div>Agua <i style="background:#38bdf8"></i></div>
+  <div>Petróleo <i style="background:#b5651d"></i></div>
   <div>Aire de instrumentos <i style="background:#e5484d"></i></div>
   <div>Señal PLC / ESD <i style="background:#58a6ff"></i></div>
   <div>Aceite hidráulico <i style="background:#e2a03f"></i></div>
@@ -284,10 +285,16 @@
    ===================================================================== */
 
 const COL = {
-  proceso:0x9aa4ad, agua:0x2f81f7, petroleo:0x2d333b,
+  proceso:0x9aa4ad, agua:0x38bdf8, petroleo:0xb5651d,
   aire:0xe5484d, senal:0x58a6ff, aceite:0xe2a03f,
   acero:0xb8c1cb, verde:0x8fae7a, azul:0x2f6fb0, gris:0x6e7681,
-  piso:0x161b22, amarillo:0xd6b03a
+  piso:0x1b222b, amarillo:0xd6b03a
+};
+/* Resplandor de cada fluido: tono más claro que el núcleo. Se dibuja con mezcla
+   aditiva, así que sobre el piso oscuro suma luz en vez de taparlo.            */
+const HALO = {
+  agua:0x9ae8ff, petroleo:0xffb066, aire:0xff9094,
+  aceite:0xffd98a, senal:0xa8d6ff
 };
 
 let scene, camera, renderer, clock;
@@ -318,7 +325,7 @@ function init(){
     new THREE.PlaneGeometry(220,180),
     new THREE.MeshStandardMaterial({color:COL.piso, roughness:1, metalness:0}));
   piso.rotation.x = -Math.PI/2; piso.position.y = -0.05; scene.add(piso);
-  const grid = new THREE.GridHelper(220, 44, 0x2b3138, 0x1c2229);
+  const grid = new THREE.GridHelper(220, 44, 0x3d4854, 0x272f39);
   grid.position.y = 0; scene.add(grid);
 
   clock = new THREE.Clock();
@@ -386,15 +393,42 @@ function etiqueta(txt,x,y,z,sub){
 }
 
 /* ------------------------------------------------------ flujo animado */
-function flujo(pts, color, n, vel, tam){
+/* Textura del resplandor: degradé radial blanco → transparente. Se genera una
+   sola vez y la comparten todas las partículas.                              */
+const texHalo = (()=>{
+  const cv=document.createElement('canvas'); cv.width=cv.height=64;
+  const ctx=cv.getContext('2d');
+  const g=ctx.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0,   'rgba(255,255,255,1)');
+  g.addColorStop(0.22,'rgba(255,255,255,0.62)');
+  g.addColorStop(0.55,'rgba(255,255,255,0.16)');
+  g.addColorStop(1,   'rgba(255,255,255,0)');
+  ctx.fillStyle=g; ctx.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(cv);
+})();
+
+/* Cada partícula es un núcleo opaco de color pleno más un halo aditivo que la
+   hace destacar sobre el piso. `op` afina el realce por fluido:
+   {halo, brillo, radio}.                                                      */
+function flujo(pts, color, n, vel, tam, op){
+  const o = op || {};
   const curva = new THREE.CatmullRomCurve3(pts.map(p=>new THREE.Vector3(...p)));
-  const geo = new THREE.SphereGeometry(tam||0.34, 10, 8);
+  const r   = tam||0.34;
+  const geo = new THREE.SphereGeometry(r, 10, 8);
   const m   = new THREE.MeshBasicMaterial({color});
+  const brillo = o.brillo!==undefined ? o.brillo : 0.8;
+  const matHalo = new THREE.SpriteMaterial({
+    map:texHalo, color:o.halo||color, transparent:true,
+    blending:THREE.AdditiveBlending, depthWrite:false, opacity:brillo});
   const bolas=[];
   for(let i=0;i<n;i++){
-    const b=new THREE.Mesh(geo,m); b.userData.t=i/n; scene.add(b); bolas.push(b);
+    const b=new THREE.Mesh(geo,m); b.userData.t=i/n;
+    const h=new THREE.Sprite(matHalo);
+    h.scale.setScalar(r*(o.radio||5.4));      // el halo desborda la esfera
+    b.add(h);
+    scene.add(b); bolas.push(b);
   }
-  const f={curva,bolas,vel:vel||0.09,activo:false,
+  const f={curva,bolas,vel:vel||0.09,activo:false,halo:matHalo,brillo,
     set(v){this.activo=v; this.bolas.forEach(b=>b.visible=v);}};
   f.set(false); flujos.push(f); return f;
 }
@@ -656,22 +690,29 @@ function construirPlanta(){
 
   /* ================= FLUJOS ================= */
   flujos.length=0;
-  F.aguaIn   = flujo([[-52,2,-6],[-34,2,-6],[-24,2,-6]], COL.agua, 12, 0.07);
+  // El ingreso al skimmer es la corriente que abre el recorrido: va más gruesa
+  // y con el halo más ancho de toda la planta.
+  F.aguaIn   = flujo([[-52,2,-6],[-34,2,-6],[-24,2,-6]], COL.agua, 12, 0.07, 0.46,
+                     {halo:HALO.agua, brillo:1.0, radio:6.4});
   F.petroleo = flujo([[-16,6,-6],[-8,6,-6],[-8,6,-20],[-2,6,-20],[4,4,-20],
-                      [8,2,-20],[14,2,-20],[24,2,-20],[34,2,-20]], 0x30363d, 16, 0.05, 0.3);
+                      [8,2,-20],[14,2,-20],[24,2,-20],[34,2,-20]], COL.petroleo, 16, 0.05, 0.38,
+                     {halo:HALO.petroleo, brillo:0.95, radio:6.0});
   F.agua     = flujo([[-16,3,-6],[-8,3,-6],[-8,3,6],[-2,3,6],[4,3,6],
-                      [8,2,6],[14,2,6],[24,2,6],[34,2,6]], COL.agua, 16, 0.05, 0.3);
+                      [8,2,6],[14,2,6],[24,2,6],[34,2,6]], COL.agua, 16, 0.05, 0.38,
+                     {halo:HALO.agua, brillo:0.95, radio:6.0});
   F.aire1    = flujo([[-40.5,3,30],[-35,3,30],[-32,3,30],[-29,3,30],[-24,3,30],
-                      [-16.5,3,30],[-16.5,3,25],[-13,3.2,25]], COL.aire, 14, 0.10, 0.26);
+                      [-16.5,3,30],[-16.5,3,25],[-13,3.2,25]], COL.aire, 14, 0.10, 0.26,
+                     {halo:HALO.aire, brillo:0.7});
   F.aire2    = flujo([[-9,3.2,25],[-6,3.2,25],[-6,11,25],[-6,11,14],
-                      [12,11,14],[24,11,14],[24,11,6],[24,5.4,6]], COL.aire, 16, 0.10, 0.26);
+                      [12,11,14],[24,11,14],[24,11,6],[24,5.4,6]], COL.aire, 16, 0.10, 0.26,
+                     {halo:HALO.aire, brillo:0.7});
   F.aceite   = flujo([[-33,1.7,60],[-30.5,2.4,60],[-27,4.6,60],[-22,4.6,60],
                       [-17,4.6,60],[-14.2,3,60],[-9.8,3,60],[-4,2.2,60],[2,2.2,60]],
-                      COL.aceite, 14, 0.09, 0.26);
+                      COL.aceite, 14, 0.09, 0.26, {halo:HALO.aceite, brillo:0.7});
 
   // señal PLC (azul, punteada)
   F.senal = flujo([[-2,4,44],[-2,11,44],[-2,11,14],[-5,11,6],[-5,5.4,6]],
-                   COL.senal, 10, 0.16, 0.2);
+                   COL.senal, 10, 0.16, 0.2, {halo:HALO.senal, brillo:0.65});
 
   /* ---------- fichas técnicas: click sobre el equipo ---------- */
   const E = equipos;
@@ -1133,9 +1174,11 @@ function animar(){
   }
   document.getElementById('barFill').style.width = (tPaso/DUR*100)+'%';
 
-  // partículas de flujo
+  // partículas de flujo (el halo late suave: el fluido se lee en movimiento)
+  const pulso = 0.86 + Math.sin(performance.now()*0.0035)*0.14;
   flujos.forEach(f=>{
     if(!f.activo) return;
+    if(f.halo) f.halo.opacity = f.brillo*pulso;
     f.bolas.forEach(b=>{
       b.userData.t = (b.userData.t + f.vel*dt) % 1;
       f.curva.getPointAt(b.userData.t, b.position);
