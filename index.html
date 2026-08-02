@@ -1280,12 +1280,18 @@ function actualizarHUD(){
 /* Red de seguridad: si el equipo no sostiene 24 fps en los primeros segundos
    (máquina vieja, teléfono de gama baja, GPU por software), se apagan las
    sombras. Que la animación corra fluida importa más que el detalle.          */
-let fpsCuadros = 0, fpsDesde = 0, calidadAjustada = false;
+let fpsCuadros = 0, fpsDesde = 0, fpsArranque = 0, calidadAjustada = false;
 function vigilarRendimiento(){
   if(calidadAjustada) return;
-  if(!fpsDesde){ fpsDesde = performance.now(); return; }
+  const ahora = performance.now();
+  if(!fpsArranque){ fpsArranque = ahora; return; }
+  /* El primer segundo no se cuenta: ahí el navegador compila los shaders y
+     arma las texturas, y siempre rinde peor. Medir en esa ventana hacía que
+     un equipo mediano pareciera lento y perdiera las sombras al pedo.        */
+  if(ahora - fpsArranque < 1000) return;
+  if(!fpsDesde){ fpsDesde = ahora; return; }
   fpsCuadros++;
-  const transcurrido = performance.now() - fpsDesde;
+  const transcurrido = ahora - fpsDesde;
   if(transcurrido < 3000) return;
   calidadAjustada = true;
   if(fpsCuadros/(transcurrido/1000) < 24){
