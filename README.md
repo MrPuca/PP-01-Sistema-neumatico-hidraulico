@@ -53,7 +53,9 @@ Ante un derrame, la central Prayco eleva la rampa basculante con el cilindro Con
 | Desplazar | Click derecho | Dos dedos |
 | Ficha técnica de un equipo | Click sobre el equipo | Toque sobre el equipo |
 
-**Atajos:** `I` datos del proyecto · `P` modo presentación (agranda el HUD para proyector) · `U` pantalla completa · `Espacio` fija o suelta la cámara · `Esc` cierra.
+**Atajos:** `I` datos del proyecto · `P` modo presentación (agranda el HUD para proyector) · `U` pantalla completa · `H` despeja los paneles · `Espacio` fija o suelta la cámara · `Esc` cierra.
+
+En el teléfono los paneles se acomodan solos: la instrumentación pasa a una tira de datos arriba y los botones quedan como íconos. Si aun así molestan, el botón del **ojo** (👁) saca todo de la pantalla y deja la planta sola; se toca de nuevo para recuperarlos.
 
 Hay **22 equipos con ficha técnica**: al hacer click aparecen sus datos nominales y el criterio de selección que lo justifica.
 
